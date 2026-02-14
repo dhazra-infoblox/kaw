@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **k8s-agent-warden** - Kubernetes AI Agent Warden
 
+A security tool to verify third-party AI agent identities in Kubernetes clusters and protect against hijacked/malicious domains using DNS threat intelligence.
+
 ## Problem Statement
 
 When deploying third-party AI agents in Kubernetes, there is no reliable way to verify:
@@ -48,7 +50,40 @@ When deploying third-party AI agents in Kubernetes, there is no reliable way to 
 - mTLS certificates (X.509)
 - JWT/OIDC tokens
 
-### 3. Scalability
+### 3. Policy Engine (OPA/Gatekeeper)
+
+**Policy Support:**
+- OPA (Open Policy Agent) integration for declarative policy enforcement
+- Gatekeeper as admission controller for Kubernetes-native policy enforcement
+- Rego policy language for writing agent identity and domain validation policies
+
+**Policy Use Cases:**
+- Allow only trusted vendor agents (whitelist by vendor label)
+- Block agents connecting to known malicious domains
+- Enforce required labels/annotations on agent pods
+- Validate agent certificates at deployment time
+- Rate limiting for agent API calls
+
+**Example Policies (Rego):**
+```rego
+# Allow only trusted vendor agents
+allow[msg] {
+  input.request.kind.kind == "Pod"
+  vendor := input.request.object.metadata.labels.vendor
+  trusted_vendors[vendor]
+  msg := ""
+}
+
+# Block agents connecting to malicious domains
+deny[msg] {
+  input.request.kind.kind == "Pod"
+  domain := input.request.object.spec.containers[_].env[_].value
+  malicious_domains[domain]
+  msg := sprintf("Blocked malicious domain: %v", [domain])
+}
+```
+
+### 4. Scalability
 
 - Single cluster deployment
 - Multiple clusters support (shared threat data)
@@ -89,18 +124,32 @@ When deploying third-party AI agents in Kubernetes, there is no reliable way to 
 │  │   │Blocklist│   │  Check   │   │          │              │   │
 │  │   └──────────┘   └──────────┘   └──────────┘              │   │
 │  └─────────────────────────────────────────────────────────────┘   │
+│                              │                                       │
+│                              ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                    OPA Policy Engine                          │   │
+│  │  ┌─────────────────┐    ┌─────────────────────────────┐    │   │
+│  │  │  Gatekeeper     │ ←  │  Rego Policies              │    │   │
+│  │  │  (Admission)    │    │  • Vendor whitelist          │    │   │
+│  │  │                 │    │  • Domain blocklist          │    │   │
+│  │  │                 │    │  • Required labels          │    │   │
+│  │  └─────────────────┘    └─────────────────────────────┘    │   │
+│  └─────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Data Flow
 
 ```
-1. Agent attempts outbound connection to domain X
-2. Request intercepted by DNS validation pipeline
-3. Check local blocklist/cache first
-4. Query chained external providers via unified interface
-5. Verify domain against trusted vendor list (ConfigMap/CRD/Certificate)
-6. Allow or block based on results
+1. Agent deployment request arrives at Kubernetes API
+2. Gatekeeper intercepts via admission webhook
+3. OPA evaluates Rego policies:
+   - Check vendor is trusted
+   - Check domains against DNS validation pipeline
+   - Check required labels/annotations
+4. Policy decision: Allow or Deny
+5. If allowed: Agent pod created
+6. Runtime: DNS validation pipeline validates outbound connections
 7. Log and alert as needed
 ```
 
@@ -108,6 +157,8 @@ When deploying third-party AI agents in Kubernetes, there is no reliable way to 
 
 - **Language**: Go
 - **Kubernetes**: operator-sdk / kubebuilder
+- **Policy Engine**: OPA + Gatekeeper
+- **Policy Language**: Rego
 - **Deployment**: Kubernetes operator + admission webhook
 - **DNS Resolution**: CoreDNS integration or custom DNS server
 
@@ -128,6 +179,9 @@ make run
 
 # Run tests
 make test
+
+# Apply OPA policies
+make apply-policies
 ```
 
 ## Project Structure
@@ -136,6 +190,7 @@ make test
 .
 ├── api/            # Kubernetes API definitions (CRDs)
 ├── config/         # Kubernetes manifests (CRD, RBAC, deployments)
+│   └── policies/   # OPA/Gatekeeper policy definitions
 ├── controllers/    # Reconciliation logic
 ├── internal/       # Internal packages
 │   ├── dns/        # DNS validation logic
@@ -145,6 +200,7 @@ make test
 │   │   ├── cache/      # Local cache
 │   │   └── local/      # Local DNS / blocklist
 │   ├── identity/   # Agent identity validation
+│   ├── policy/     # OPA policy evaluation
 │   └── providers/  # External DNS provider implementations
 ├── pkg/            # Shared packages
 └── Makefile        # Build automation

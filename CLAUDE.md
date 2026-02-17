@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**k8s-agent-warden** - Kubernetes AI Agent Warden
+**KAW** - Kubernetes Agent Warden
 
-A security tool to verify third-party AI agent identities in Kubernetes clusters and protect against hijacked/malicious domains using DNS threat intelligence.
+A security tool to verify third-party AI agent identities in Kubernetes clusters using an external CA service for identity verification and DNS threat intelligence.
 
 ## Problem Statement
 
@@ -15,9 +15,153 @@ When deploying third-party AI agents in Kubernetes, there is no reliable way to 
 - **Integrity**: That the agent hasn't been compromised or tampered with
 - **Safety**: That the agent's outbound connections aren't to hijacked or malicious domains
 
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Two-Project System                             │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                      CA as SaaS (External)                       │
+│                                                                  │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │              CA Service (https://ca.example.com)        │   │
+│   │                                                          │   │
+│   │   • Vendor registration                                 │   │
+│   │   • X.509 certificate issuance                         │   │
+│   │   • REST API: GET /certificates/{vendor}              │   │
+│   │   • Returns: cert + signature                         │   │
+│   │                                                          │   │
+│   └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                │ Returns cert + signature
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     KAW (In Customer Cluster)                    │
+│                                                                  │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │  1. Receive pod create request                          │   │
+│   │  2. Extract vendor from pod labels                     │   │
+│   │  3. Query CA: GET /certificates/{vendor}              │   │
+│   │  4. Validate:                                          │   │
+│   │     • Signature (using CA public key)                  │   │
+│   │     • Not expired                                      │   │
+│   │     • Vendor matches                                    │   │
+│   │  5. DNS validation (optional)                          │   │
+│   │  6. OPA policy (optional)                              │   │
+│   │  7. Allow/Deny                                         │   │
+│   └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## How It Works
+
+### 1. Vendor Registration (CA Service - Separate Project)
+
+```
+┌──────────┐    ┌─────────────┐    ┌──────────────┐
+│  Vendor  │───→│    CA      │───→│  Certificate │
+│  applies │    │   Service  │    │   issued     │
+│          │    │ (validates)│    │              │
+└──────────┘    └─────────────┘    └──────────────┘
+```
+
+### 2. Agent Deployment (KAW Flow)
+
+```
+1. User deploys agent (with vendor labels, NO certificate):
+   apiVersion: v1
+   kind: Pod
+   metadata:
+     labels:
+       vendor: acme-corp
+       agent: acme-agent-v1
+   spec:
+     containers:
+       - name: agent
+         image: acme/agent:latest
+
+2. KAW intercepts pod create request
+
+3. KAW extracts vendor from labels:
+   - vendor: acme-corp
+   - agent: acme-agent-v1
+
+4. KAW queries CA Service:
+   GET https://ca.example.com/certificates/acme-corp/acme-agent-v1
+
+5. CA returns:
+   {
+     "vendor": "acme-corp",
+     "agent_id": "acme-agent-v1",
+     "certificate": "-----BEGIN CERTIFICATE-----...",
+     "signature": "...",
+     "issued_at": "2024-01-01T00:00:00Z",
+     "expires_at": "2025-01-01T00:00:00Z"
+   }
+
+6. KAW validates:
+   - vendor label matches cert.vendor
+   - agent label matches cert.agent_id
+   - Signature (using trusted CA public key)
+   - Not expired
+
+7. (Optional) DNS validation
+8. (Optional) OPA policy evaluation
+
+9. Allow or Deny
+```
+
 ## Requirements
 
-### 1. DNS Threat Validation (Core Feature)
+### 1. Agent Identity Validation (via External CA)
+
+**CA Service Integration:**
+- KAW queries external CA service to get vendor + agent certificates
+- Similar to how DigiCert issues SSL certificates for websites
+- CA Service is a separate SaaS (not part of KAW)
+- KAW trusts CA via public key in ConfigMap
+- Each agent version gets its own certificate (per-agent)
+
+**CA Service API:**
+```
+GET /certificates/{vendor}/{agent_id}
+
+Response:
+{
+  "vendor": "acme-corp",
+  "agent_id": "acme-agent-v1",
+  "certificate": "-----BEGIN CERTIFICATE-----...",
+  "signature": "...",
+  "issued_at": "2024-01-01T00:00:00Z",
+  "expires_at": "2025-01-01T00:00:00Z"
+}
+```
+
+**KAW Flow:**
+1. User deploys agent pod with labels:
+   - `vendor: acme-corp`
+   - `agent: acme-agent-v1`
+2. KAW intercepts pod create request
+3. KAW queries CA Service: `GET /certificates/acme-corp/acme-agent-v1`
+4. KAW validates:
+   - vendor label matches cert.vendor
+   - agent label matches cert.agent_id
+   - signature valid
+   - not expired
+5. Allow or Deny
+
+**User Experience:** User just deploys agent - no certificate management needed.
+
+**Registration Flow:**
+1. Vendor registers with CA (company, domain, contact)
+2. Vendor registers their agents (agent_id, version, metadata)
+3. CA issues certificate per agent
+4. Certificate contains: vendor + agent_id + signature
+
+### 2. DNS Threat Validation (Optional)
 
 **Unified Provider Interface:**
 - Common interface for all external DNS providers
@@ -39,22 +183,11 @@ When deploying third-party AI agents in Kubernetes, there is no reliable way to 
 - Local DNS resolver (run a local DNS server that queries upstream)
 - Local cache (cache results from external providers for performance)
 
-### 2. Agent Identity Validation
-
-**Data Sources (all supported):**
-- ConfigMap / CRD - manually defined list of trusted vendor domains
-- Dynamic discovery - automatically discover vendor domains from cluster resources
-- Certificate-based - extract domains from agent X.509 certificates
-
-**Identity Verification Methods:**
-- mTLS certificates (X.509)
-- JWT/OIDC tokens
-
-### 3. Policy Engine (OPA/Gatekeeper)
+### 3. Policy Engine (Optional)
 
 **Policy Support:**
 - OPA (Open Policy Agent) integration for declarative policy enforcement
-- Gatekeeper as admission controller for Kubernetes-native policy enforcement
+- Embedded OPA (no extra pods)
 - Rego policy language for writing agent identity and domain validation policies
 
 **Policy Use Cases:**
@@ -62,7 +195,6 @@ When deploying third-party AI agents in Kubernetes, there is no reliable way to 
 - Block agents connecting to known malicious domains
 - Enforce required labels/annotations on agent pods
 - Validate agent certificates at deployment time
-- Rate limiting for agent API calls
 
 **Example Policies (Rego):**
 ```rego
@@ -93,6 +225,19 @@ deny[msg] {
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
+│                     External CA Service (SaaS)                        │
+│                                                                      │
+│   ┌─────────────────────────────────────────────────────────────┐   │
+│   │  CA Service (https://ca.example.com)                       │   │
+│   │  • Vendor registration                                      │   │
+│   │  • X.509 certificate issuance                               │   │
+│   │  • REST API: GET /certificates/{vendor}                   │   │
+│   └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ Returns cert + signature
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
 │                     Kubernetes Cluster                              │
 │                                                                      │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐            │
@@ -102,15 +247,16 @@ deny[msg] {
 │         │                  │                  │                    │
 │         ▼                  ▼                  ▼                    │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │                    k8s-agent-warden                         │   │
-│  │  • Validates certificates/tokens                            │   │
-│  │  • Checks domains against DNS threat feeds                  │   │
-│  │  • Blocks compromised agents                                │   │
+│  │                         KAW                                 │   │
+│  │  • Queries CA Service for certificates                      │   │
+│  │  • Validates: signature, expiry, vendor match             │   │
+│  │  • Checks domains against DNS threat feeds (optional)     │   │
+│  │  • Blocks unverified agents                                 │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                              │                                       │
 │                              ▼                                       │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │              DNS Validation Pipeline                         │   │
+│  │              DNS Validation Pipeline (Optional)               │   │
 │  │                                                              │   │
 │  │   ┌──────────────────────────────────────────────────────┐ │   │
 │  │   │         Unified DNS Provider Interface                 │ │   │
@@ -118,16 +264,11 @@ deny[msg] {
 │  │   │  │ Quad9  │  │Cloudflare│ │Umbrella│  │ Custom │    │ │   │
 │  │   │  └────────┘  └────────┘  └────────┘  └────────┘    │ │   │
 │  │   └──────────────────────────────────────────────────────┘ │   │
-│  │                              │                               │   │
-│  │   ┌──────────┐   ┌──────────┐   ┌──────────┐              │   │
-│  │   │  Local  │ → │ Chained  │ → │  Cache   │ → Allowed    │   │
-│  │   │Blocklist│   │  Check   │   │          │              │   │
-│  │   └──────────┘   └──────────┘   └──────────┘              │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                              │                                       │
 │                              ▼                                       │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │                    OPA Policy Engine                          │   │
+│  │                    OPA Policy Engine (Optional)               │   │
 │  │  ┌─────────────────┐    ┌─────────────────────────────┐    │   │
 │  │  │  Gatekeeper     │ ←  │  Rego Policies              │    │   │
 │  │  │  (Admission)    │    │  • Vendor whitelist          │    │   │
@@ -190,18 +331,20 @@ make apply-policies
 .
 ├── api/            # Kubernetes API definitions (CRDs)
 ├── config/         # Kubernetes manifests (CRD, RBAC, deployments)
-│   └── policies/   # OPA/Gatekeeper policy definitions
+│   └── policies/   # OPA policy definitions
 ├── controllers/    # Reconciliation logic
 ├── internal/       # Internal packages
-│   ├── dns/        # DNS validation logic
+│   ├── webhook/   # Admission webhook handlers
+│   ├── identity/  # Agent identity validation
+│   │   ├── client.go   # CA Service HTTP client
+│   │   └── validator.go # Certificate validation
+│   ├── dns/       # DNS validation logic (optional)
 │   │   ├── provider/    # Unified provider interface
-│   │   │   └── interface.go
 │   │   ├── chain/      # Provider chaining logic
-│   │   ├── cache/      # Local cache
-│   │   └── local/      # Local DNS / blocklist
-│   ├── identity/   # Agent identity validation
-│   ├── policy/     # OPA policy evaluation
-│   └── providers/  # External DNS provider implementations
+│   │   └── cache/      # Local cache
+│   └── policy/    # OPA policy evaluation (optional)
+├── helm/kaw/      # Helm chart
+└── Makefile       # Build automation
 ├── pkg/            # Shared packages
 └── Makefile        # Build automation
 ```

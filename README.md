@@ -25,9 +25,6 @@ kubectl apply -f test/fixtures/untrusted-pod.yaml  # should fail
 - **Controller**: Reconciles AgentWardenConfig CRD to ConfigMap
 - **CoreDNS Plugin**: Runtime DNS monitoring
 
-## Config
-
-Edit `config/samples/warden_v1alpha1_agentwardenconfig.yaml`:
 
 ```yaml
 spec:

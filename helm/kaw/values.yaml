@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/kaw/kaw
+  repository: ghcr.io/kaw/warden
   tag: latest
   pullPolicy: IfNotPresent
 
@@ -51,8 +51,8 @@ dns:
 policy:
   enabled: true
   engine: opa
-  bundleName: kaw-policies
-  configMap: kaw-policies
+  bundleName: warden-policies
+  configMap: warden-policies
 
 resources:
   limits:
@@ -70,4 +70,4 @@ affinity: {}
 
 crd:
   create: true
-  name: agentkawconfig
+  name: agentwardenconfig

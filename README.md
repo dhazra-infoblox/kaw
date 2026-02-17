@@ -22,12 +22,12 @@ kubectl apply -f test/fixtures/untrusted-pod.yaml  # should fail
 ## Architecture
 
 - **Admission Webhook**: Validates pod create/update requests
-- **Controller**: Reconciles KawConfig CRD to ConfigMap
+- **Controller**: Reconciles AgentWardenConfig CRD to ConfigMap
 - **CoreDNS Plugin**: Runtime DNS monitoring
 
 ## Config
 
-Edit `config/samples/kaw_v1alpha1_kawconfig.yaml`:
+Edit `config/samples/warden_v1alpha1_agentwardenconfig.yaml`:
 
 ```yaml
 spec:

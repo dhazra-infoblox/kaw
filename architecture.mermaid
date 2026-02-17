@@ -1,0 +1,139 @@
+flowchart TB
+    subgraph K8sCluster["Kubernetes Cluster"]
+
+        subgraph Clients["External"]
+            User["K8s User<br/>(kubectl)"]
+        end
+
+        subgraph APIServer["Kubernetes API Server"]
+            API["API Server"]
+        end
+
+        subgraph WardenSystem["warden-system namespace"]
+
+            subgraph WardenApp["k8s-agent-warden"]
+
+                subgraph ControllerComp["Controller"]
+                    Reconcile["Reconciliation Loop"]
+                end
+
+                subgraph WebhookComp["Admission Webhook"]
+                    WH["Webhook Handler<br/>:9443"]
+                end
+
+                subgraph ValidationPipeline["Validation Pipeline"]
+
+                    subgraph IdentityVal["Identity Validator"]
+                        LabelV["Label Validator"]
+                        CertV["Certificate Validator"]
+                        JWTV["JWT Validator"]
+                    end
+
+                    subgraph DNSVal["DNS Validator"]
+                        ProviderIF["Provider Interface"]
+                        Chain["Provider Chain"]
+                        Cache["DNS Cache"]
+                    end
+
+                    OPA["OPA Policy Engine"]
+                end
+
+            end
+
+            WardenDNS["Warden DNS Service<br/>(Internal API)"]
+
+            subgraph CoreDNSPlugin["CoreDNS + Warden Plugin"]
+                CoreDNS["CoreDNS"]
+                Plugin["Warden Plugin"]
+            end
+
+            ConfigCM["ConfigMap<br/>(warden-config)"]
+            CRD["AgentWardenConfig<br/>CRD"]
+
+        end
+
+        AgentPods["Agent Pods"]
+
+    end
+
+    subgraph External["External Services"]
+        Quad9["Quad9 API"]
+        Cloudflare["Cloudflare API"]
+        Umbrella["Umbrella API"]
+        LocalBlock["Local Blocklist"]
+    end
+
+    %% Controller Flow - Numbers 1-4
+    User -->|"1"| API
+    API -->|"2"| CRD
+    CRD -->|"3"| Reconcile
+    Reconcile -->|"4"| ConfigCM
+
+    %% Webhook reads config
+    ConfigCM -.->|"5"| WH
+
+    %% Identity Validation - Numbers 6-9 (Parallel with DNS)
+    WH -->|"6a"| LabelV
+    WH -->|"6b"| CertV
+    WH -->|"6c"| JWTV
+    LabelV -->|"7a"| OPA
+    CertV -->|"7b"| OPA
+    JWTV -->|"7c"| OPA
+
+    %% DNS Validation - Numbers 6'-12' (Parallel with Identity)
+    WH -->|"6'"| ProviderIF
+    ProviderIF -->|"7'"| Chain
+    Chain -->|"8'"| Cache
+
+    Chain -->|"9'"| LocalBlock
+    Chain -->|"9''"| Quad9
+    Chain -->|"9'''"| Cloudflare
+    Chain -->|"9''''"| Umbrella
+
+    LocalBlock -.->|"10'"| Chain
+    Quad9 -.->|"10'"| Chain
+    Cloudflare -.->|"10'"| Chain
+    Umbrella -.->|"10'"| Chain
+
+    Chain -->|"11'"| OPA
+
+    %% OPA Decision - Number 12
+    OPA -->|"12"| WH
+    WH -->|"13"| API
+
+    API -->|"14"| User
+
+    %% Runtime DNS Flow - Numbers 15-23
+    AgentPods -->|"15"| CoreDNS
+    CoreDNS -->|"16"| Plugin
+    Plugin -->|"17"| WardenDNS
+    WardenDNS -->|"18"| ProviderIF
+    ProviderIF -->|"19"| Chain
+    Chain -->|"20"| Cache
+    Chain -->|"21a"| LocalBlock
+    Chain -->|"21b"| Quad9
+    Chain -->|"21c"| Cloudflare
+    Chain -->|"21d"| Umbrella
+
+    LocalBlock -.->|"22a"| Chain
+    Quad9 -.->|"22b"| Chain
+    Cloudflare -.->|"22c"| Chain
+    Umbrella -.->|"22d"| Chain
+
+    Chain -->|"23a"| WardenDNS
+    Chain -->|"23b"| WardenDNS
+
+    WardenDNS -->|"24a"| CoreDNS
+    WardenDNS -->|"24b"| CoreDNS
+
+    CoreDNS -->|"25"| AgentPods
+
+    classDef k8s fill:#E6F3FF,stroke:#0066CC
+    classDef component fill:#FFF8E6,stroke:#FF9900
+    classDef external fill:#FFE6E6,stroke:#CC0000
+    classDef data fill:#E6FFE6,stroke:#006600
+
+    class API,K8sCluster,APIServer k8s
+    class WH,Reconcile,OPA,ProviderIF,Chain,Cache,IdentityVal,DNSVal,ValidationPipeline,LabelV,CertV,JWTV,WebhookComp,ControllerComp component
+    class Quad9,Cloudflare,Umbrella,External,LocalBlock external
+    class CRD,ConfigCM data

@@ -1,5 +1,5 @@
 apiVersion: v2
-name: warden
+name: kaw
 description: Kubernetes AI Agent Warden - Security tool for agent identity and DNS threat validation
 type: application
 version: 0.1.0

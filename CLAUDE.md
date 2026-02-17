@@ -221,6 +221,48 @@ deny[msg] {
 - Multiple clusters support (shared threat data)
 - Global distribution capability
 
+### 5. Configuration (KawConfig CRD)
+
+KAW is configured via the `KawConfig` CRD:
+
+```yaml
+apiVersion: warden.k8s.io/v1alpha1
+kind: KawConfig
+metadata:
+  name: default
+spec:
+  # CA Service configuration
+  caService:
+    endpoint: https://ca.example.com
+    publicKey: |
+      -----BEGIN PUBLIC KEY-----
+      ...
+      -----END PUBLIC KEY-----
+    insecureSkipVerify: false
+    timeout: 10s
+
+  # Identity Validation
+  identity:
+    enabled: true
+    vendorLabel: vendor        # Label to extract vendor name
+    agentLabel: agent          # Label to extract agent name
+
+  # DNS Validation (optional)
+  dns:
+    enabled: false
+    providers:
+      - name: local-blocklist
+        type: local
+      - name: quad9
+        type: quad9
+    chainMode: sequential
+
+  # Policy Engine (optional)
+  policy:
+    enabled: false
+    bundleName: kaw-policies
+```
+
 ## Architecture
 
 ```

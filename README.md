@@ -11,11 +11,8 @@ A Kubernetes security tool to verify third-party AI agent identities and protect
 ## Quick Start
 
 ```bash
-# Install CRDs
-kubectl apply -f config/crd/
-
-# Deploy
-kubectl apply -f config/deployment/
+# Install Helm chart
+helm install warden ./chart --namespace warden-system --create-namespace
 
 # Test
 kubectl apply -f test/fixtures/trusted-pod.yaml  # should succeed
@@ -54,4 +51,4 @@ spec:
 
 ## Docs
 
-- [Architecture Diagram](docs/architecture.mermaid)
+- [Architecture Diagram](architecture.mermaid)

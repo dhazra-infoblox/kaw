@@ -1,0 +1,73 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/kaw/warden
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+webhook:
+  enabled: true
+  port: 9443
+  failurePolicy: Fail
+  timeoutSeconds: 10
+  certDir: /etc/webhook/certs
+
+identity:
+  enabled: true
+  methods:
+    - label
+    - certificate
+    - jwt
+  trustedVendors:
+    - acme
+    - contoso
+
+dns:
+  enabled: true
+  runtimeMonitoring: false
+  chainMode: sequential
+  cache:
+    enabled: true
+    ttl: 300
+  providers:
+    - name: local-blocklist
+      type: local
+      priority: 1
+      enabled: true
+
+policy:
+  enabled: true
+  engine: opa
+  bundleName: warden-policies
+  configMap: warden-policies
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+crd:
+  create: true
+  name: agentwardenconfig
